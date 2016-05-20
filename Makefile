@@ -1,5 +1,5 @@
 PROJECT = tepid
-PROJECT_DESCRIPTION = New project
+PROJECT_DESCRIPTION = Tansu Proxy Interface Daemon
 PROJECT_VERSION = 0.0.1
 
 DEPS = \

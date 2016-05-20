@@ -18,4 +18,6 @@ ENTRYPOINT exec ${BINDIR}/erlexec \
            -config ${CONFIG} \
            -args_file ${ARGS_FILE}
 
+EXPOSE 22 2379
+
 ADD _rel/${REL_NAME}/ /
