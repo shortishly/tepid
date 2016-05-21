@@ -21,6 +21,7 @@
 start(_Type, _Args) ->
     try
         {ok, Sup} = tepid_sup:start_link(),
+        _ = start_advertiser(tepid_tcp_advertiser),
         [tepid:trace(true) || tepid_config:enabled(debug)],
         {ok, Sup, #{listeners => [start_http(http)]}}
     catch
@@ -33,6 +34,12 @@ stop(#{listeners := Listeners}) ->
     lists:foreach(fun cowboy:stop_listener/1, Listeners);
 stop(_State) ->
     ok.
+
+
+start_advertiser(Advertiser) ->
+    _ = [mdns_discover_sup:start_child(Advertiser) || tepid_config:can(discover)],
+    _ = [mdns_advertise_sup:start_child(Advertiser) || tepid_config:can(advertise)].
+
 
 start_http(Prefix) ->
     {ok, _} = cowboy:start_http(
@@ -51,7 +58,8 @@ resources(http) ->
 
 
 endpoints() ->
-    [endpoint(v2, "/keys/[...]", tepid_v2_api_resource)].
+    [endpoint(v2, "/members", tepid_v2_members_resource),
+     endpoint(v2, "/keys/[...]", tepid_v2_keys_resource)].
 
 endpoint(Endpoint, Pattern, Module) ->
     endpoint(Endpoint, Pattern, Module, []).
