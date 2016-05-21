@@ -149,7 +149,7 @@ info({gun_response, _, _, fin, 201 = Status, Headers}, Req, #{key := Key, method
        Req),
      State};
 
-info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevIndex">> := _}} = State) ->
+info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevIndex">> := PrevIndex}} = State) ->
     {stop,
      cowboy_req:reply(
        200,
@@ -162,8 +162,8 @@ info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PU
                          modifiedIndex => index(Headers),
                          createdIndex => index(Headers)}, Headers),
              prevNode => #{key => Key,
-                           modifiedIndex => index(Headers),
-                           createdIndex => index(Headers)}})),
+                           modifiedIndex => any:to_integer(PrevIndex),
+                           createdIndex => any:to_integer(PrevIndex)}})),
        Req),
      State};
 
