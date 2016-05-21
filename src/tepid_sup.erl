@@ -22,7 +22,8 @@ start_link() ->
     supervisor:start_link({local, ?MODULE}, ?MODULE, []).
 
 init([]) ->
-    {ok, {#{}, [worker(tepid_mdns_tansu_discovery)]}}.
+    {ok, {#{}, [worker(tepid_mdns_discovery),
+                worker(tepid_mdns_tansu_discovery)]}}.
 
 worker(Module) ->
     worker(Module, transient).

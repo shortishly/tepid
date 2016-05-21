@@ -15,6 +15,7 @@
 -module(tepid_config).
 
 -export([acceptors/1]).
+-export([can/1]).
 -export([enabled/1]).
 -export([endpoint/1]).
 -export([environment/0]).
@@ -23,17 +24,25 @@
 acceptors(http) ->
     envy(to_integer, http_acceptors, 100).
 
+can(advertise) ->
+    envy(to_boolean, can_advertise, true);
+can(discover) ->
+    envy(to_boolean, can_discover, true);
+can(mesh) ->
+    envy(to_boolean, can_mesh, true).
+
 enabled(debug) ->
     envy(to_boolean, debug, false).
 
 endpoint(v2) ->
     envy(to_list, endpoint_v2, "/v2").
 
+environment() ->
+    envy(to_list, environment, "dev").
+
 port(http) ->
     envy(to_integer, http_port, 2379).
 
-environment() ->
-    envy(to_list, environment, "dev").
 
 envy(To, Name, Default) ->
     envy:To(tepid, Name, default(Default)).

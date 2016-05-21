@@ -13,7 +13,7 @@
 %% limitations under the License.
 
 
--module(tepid_v2_api_resource).
+-module(tepid_v2_keys_resource).
 
 -export([init/2]).
 -export([info/3]).
@@ -149,6 +149,24 @@ info({gun_response, _, _, fin, 201 = Status, Headers}, Req, #{key := Key, method
        Req),
      State};
 
+info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevIndex">> := _}} = State) ->
+    {stop,
+     cowboy_req:reply(
+       200,
+       headers(maps:merge(maps:from_list(Headers), #{<<"content-type">> => <<"application/json">>})),
+       add_newline(
+         jsx:encode(
+           #{action => compareAndSwap,
+             node => add_node_ttl(
+                       #{key => Key,
+                         modifiedIndex => index(Headers),
+                         createdIndex => index(Headers)}, Headers),
+             prevNode => #{key => Key,
+                           modifiedIndex => index(Headers),
+                           createdIndex => index(Headers)}})),
+       Req),
+     State};
+
 info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevExist">> := <<"true">>}} = State) ->
     {stop,
      cowboy_req:reply(
@@ -235,13 +253,24 @@ info({gun_data, _, _, fin, Data}, Req, #{key := ParentKey, method := <<"GET">>, 
     {stop, cowboy_req:reply(200, headers(Headers), add_newline(ResponseBody), Req), State};
 
 info({gun_data, _, _, fin, Data}, Req, #{key := Key, method := <<"GET">>, origin := #{status := 200, headers := Headers}, data := Partial} = State) ->
-    ResponseBody = jsx:encode(
-                     #{action => get,
-                       node => add_node_ttl(#{key => Key,
-                                              modifiedIndex => index(Headers),
-                                              createdIndex => index(Headers),
-                                              value => <<Partial/bytes, Data/bytes>>},
-                                            Headers)}),
+    ResponseBody = case <<Partial/bytes, Data/bytes>> of
+                       <<"etcd.dir">> ->
+                           jsx:encode(
+                             #{action => get,
+                               node => add_node_ttl(#{key => Key,
+                                                      modifiedIndex => index(Headers),
+                                                      createdIndex => index(Headers),
+                                                      dir => true},
+                                                    Headers)});
+                       Value ->
+                           jsx:encode(
+                             #{action => get,
+                               node => add_node_ttl(#{key => Key,
+                                                      modifiedIndex => index(Headers),
+                                                      createdIndex => index(Headers),
+                                                      value => Value},
+                                                    Headers)})
+                   end,
     {stop, cowboy_req:reply(200, headers(Headers), add_newline(ResponseBody), Req), State};
 
 
@@ -311,7 +340,7 @@ add_node_ttl(Node, Headers) ->
 
 maybe_request_body(_, #{key := Key, method := <<"PUT">>, qs := #{<<"dir">> := <<"true">>}, headers := Headers} = S0) ->
     S1 = S0#{headers := Headers#{<<"content-type">> => <<"application/x-www-form-urlencoded">>}},
-    S1#{request => proxy(<<"/api/keys", Key/bytes>>, S1, <<"value=dir">>)};
+    S1#{request => proxy(<<"/api/keys", Key/bytes>>, S1, <<"value=etcd.dir">>)};
 
 maybe_request_body(Req, State) ->
     has_body(Req, State).
@@ -418,6 +447,9 @@ qs(Prefix, QS) ->
 
           (<<"dir">>, _, A) ->
               A;
+
+          (<<"quorum">>, <<"true">>, A) ->
+              append_to_qs(Prefix, <<"role">>, <<"leader">>, A);
 
           (<<"quorum">>, _, A) ->
               A;
