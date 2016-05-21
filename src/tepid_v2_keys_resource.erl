@@ -116,6 +116,22 @@ info({gun_response, _, _, fin, 409, Headers}, Req, #{qs := #{<<"prevValue">> := 
        Req),
      State};
 
+info({gun_response, _, _, fin, 201 = Status, Headers}, Req, #{key := Key, method := <<"PUT">>, request := #{body := #{qs := #{<<"value">> := Value}}}, qs := #{<<"prevExist">> := <<"false">>}} = State) ->
+    {stop,
+     cowboy_req:reply(
+       Status,
+       headers(maps:merge(maps:from_list(Headers), #{<<"content-type">> => <<"application/json">>})),
+       add_newline(
+         jsx:encode(
+           #{action => create,
+             node => add_node_ttl(
+                       #{key => Key,
+                         value => Value,
+                         modifiedIndex => index(Headers),
+                         createdIndex => index(Headers)}, Headers)})),
+       Req),
+     State};
+
 info({gun_response, _, _, fin, 201 = Status, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"dir">> := <<"true">>}} = State) ->
     {stop,
      cowboy_req:reply(
@@ -149,7 +165,7 @@ info({gun_response, _, _, fin, 201 = Status, Headers}, Req, #{key := Key, method
        Req),
      State};
 
-info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevIndex">> := PrevIndex}} = State) ->
+info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, request := #{body := #{qs := #{<<"value">> := Value}}}, qs := #{<<"prevIndex">> := PrevIndex}} = State) ->
     {stop,
      cowboy_req:reply(
        200,
@@ -159,15 +175,17 @@ info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PU
            #{action => compareAndSwap,
              node => add_node_ttl(
                        #{key => Key,
+                         value => Value,
                          modifiedIndex => index(Headers),
-                         createdIndex => index(Headers)}, Headers),
+                         createdIndex => any:to_integer(PrevIndex)}, Headers),
              prevNode => #{key => Key,
+                           value => Value,
                            modifiedIndex => any:to_integer(PrevIndex),
                            createdIndex => any:to_integer(PrevIndex)}})),
        Req),
      State};
 
-info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, qs := #{<<"prevExist">> := <<"true">>}} = State) ->
+info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, request := #{body := #{qs := #{<<"value">> := Value}}}, qs := #{<<"prevExist">> := <<"true">>}} = State) ->
     {stop,
      cowboy_req:reply(
        200,
@@ -177,15 +195,17 @@ info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PU
            #{action => update,
              node => add_node_ttl(
                        #{key => Key,
+                         value => Value,
                          modifiedIndex => index(Headers),
                          createdIndex => index(Headers)}, Headers),
              prevNode => #{key => Key,
+                           value => Value,
                            modifiedIndex => index(Headers),
                            createdIndex => index(Headers)}})),
        Req),
      State};
 
-info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>} = State) ->
+info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PUT">>, request := #{body := #{qs := #{<<"value">> := Value}}}} = State) ->
     {stop,
      cowboy_req:reply(
        200,
@@ -195,9 +215,11 @@ info({gun_response, _, _, fin, 204, Headers}, Req, #{key := Key, method := <<"PU
            #{action => set,
              node => add_node_ttl(
                        #{key => Key,
+                         value => Value,
                          modifiedIndex => index(Headers),
                          createdIndex => index(Headers)}, Headers),
              prevNode => #{key => Key,
+                           value => Value,
                            modifiedIndex => index(Headers),
                            createdIndex => index(Headers)}})),
        Req),
@@ -216,12 +238,13 @@ info({gun_data, _, _, nofin, Data}, Req, #{key := Key, data := Partial, origin :
         [Message, _Remainder] ->
             case binary:split(Message, <<"\n">>, [global]) of
                 [<<"id: ", Id/bytes>>, <<"event: ", Event/bytes>>, <<"data: ", Compound/bytes>>] ->
-                    ok = cowboy_req:chunk(notification(
-                                            Key,
-                                            Id,
-                                            Event,
-                                            Headers,
-                                            jsx:decode(Compound, [return_maps])),
+                    ok = cowboy_req:chunk(add_newline(
+                                            notification(
+                                              Key,
+                                              Id,
+                                              Event,
+                                              Headers,
+                                              jsx:decode(Compound, [return_maps]))),
                                           Req),
                     {stop, Req, State}
             end;
@@ -285,7 +308,7 @@ info({request_body, #{complete := Data}},
     %% letting them know not to expect any more.
     BodyQS = maps:from_list(cow_qs:parse_qs(<<Partial/bytes, Data/bytes>>)),
     Request = proxy(<<"/api/keys", Key/bytes>>, State#{qs := maps:merge(QS, maps:with([<<"ttl">>], BodyQS))}, qs(<<>>, BodyQS)),
-    {ok, Req, maps:without([partial], State#{request => Request})};
+    {ok, Req, maps:without([partial], State#{request => #{id => Request, body => #{qs => BodyQS}}})};
 
 info({request_body, #{more := More}},
      Req,
@@ -340,7 +363,7 @@ add_node_ttl(Node, Headers) ->
 
 maybe_request_body(_, #{key := Key, method := <<"PUT">>, qs := #{<<"dir">> := <<"true">>}, headers := Headers} = S0) ->
     S1 = S0#{headers := Headers#{<<"content-type">> => <<"application/x-www-form-urlencoded">>}},
-    S1#{request => proxy(<<"/api/keys", Key/bytes>>, S1, <<"value=etcd.dir">>)};
+    S1#{request => #{id => proxy(<<"/api/keys", Key/bytes>>, S1, <<"value=etcd.dir">>)}};
 
 maybe_request_body(Req, State) ->
     has_body(Req, State).
@@ -355,7 +378,7 @@ has_body(Req, #{key := Key} = State) ->
         false ->
             %% There is no request body from the client, time to move
             %% on. Proxy the http request through to the origin.
-            State#{request => proxy(<<"/api/keys", Key/bytes>>, State)}
+            State#{request => #{id => proxy(<<"/api/keys", Key/bytes>>, State)}}
     end.
 
 
